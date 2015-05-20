@@ -19,8 +19,13 @@
 //
 
 #import "HNKNetworkFetcher.h"
+#import "AFNetworking.h"
 
-@implementation HNKNetworkFetcher {
+@interface KTHNKNetworkFetcher()
+@property(nonatomic,strong) AFHTTPRequestOperation *kt_AFHTTPRequestOperation;
+@end
+
+@implementation KTHNKNetworkFetcher {
     NSURL *_URL;
     BOOL _cancelled;
     NSURLSessionDataTask *_dataTask;
@@ -40,64 +45,53 @@
     return _URL.absoluteString;
 }
 
-- (void)fetchImageWithSuccess:(void (^)(UIImage *image))successBlock failure:(void (^)(NSError *error))failureBlock;
-{
+- (void)fetchImageWithSuccess:(void (^)(UIImage *image))successBlock failure:(void (^)(NSError *error))failureBlock{
     _cancelled = NO;
     __weak __typeof__(self) weakSelf = self;
-    _dataTask = [self.URLSession dataTaskWithURL:_URL completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    //Use AFNetworking instead of NSURLSession, thus we have iOS 6 support.
+    //By Jayden Zhao
+    NSURLRequest *request = [NSURLRequest requestWithURL:_URL];
+    AFHTTPRequestOperation *afOperation = [[AFHTTPRequestOperation alloc] initWithRequest:request];
+    [afOperation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
+        
         __strong __typeof__(weakSelf) strongSelf = weakSelf;
-
+        
         if (!strongSelf) return;
-
+        
         if (strongSelf->_cancelled) return;
         
         NSURL *URL = strongSelf->_URL;
         
-        if (error)
-        {
-            if ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled) return;
-            
-            HanekeLog(@"Request %@ failed with error %@", URL.absoluteString, error);
-            if (!failureBlock) return;
-            
-            dispatch_async(dispatch_get_main_queue(), ^{
-                failureBlock(error);
-            });
+        
+        if (![operation.response isKindOfClass:NSHTTPURLResponse.class]){
+            Kt_HanekeLog(@"Request %@ received unknown response %@", URL.absoluteString, response);
             return;
         }
-        
-        if (![response isKindOfClass:NSHTTPURLResponse.class])
-        {
-            HanekeLog(@"Request %@ received unknown response %@", URL.absoluteString, response);
-            return;
-        }
-        
-        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse*)response;
-        if (httpResponse.statusCode != 200)
-        {
+        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse*)operation.response;
+        if (httpResponse.statusCode != 200){
             NSString *errorDescription = [NSHTTPURLResponse localizedStringForStatusCode:httpResponse.statusCode];
-            [strongSelf failWithLocalizedDescription:errorDescription code:HNKErrorNetworkFetcherInvalidStatusCode block:failureBlock];
+            [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherInvalidStatusCode block:failureBlock];
             return;
         }
         
-        const long long expectedContentLength = response.expectedContentLength;
-        if (expectedContentLength > -1)
-        {
+        NSData *data = operation.responseData;
+        
+        const long long expectedContentLength = operation.response.expectedContentLength;
+        if (expectedContentLength > -1){
             const NSUInteger dataLength = data.length;
             if (dataLength < expectedContentLength)
             {
                 NSString *errorDescription = [NSString stringWithFormat:NSLocalizedString(@"Request %@ received %ld out of %ld bytes", @""), URL.absoluteString, (long)dataLength, (long)expectedContentLength];
-                [strongSelf failWithLocalizedDescription:errorDescription code:HNKErrorNetworkFetcherMissingData block:failureBlock];
+                [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherMissingData block:failureBlock];
                 return;
             }
         }
         
         UIImage *image = [UIImage imageWithData:data];
         
-        if (!image)
-        {
+        if (!image){
             NSString *errorDescription = [NSString stringWithFormat:NSLocalizedString(@"Failed to load image from data at URL %@", @""), URL];
-            [strongSelf failWithLocalizedDescription:errorDescription code:HNKErrorNetworkFetcherInvalidData block:failureBlock];
+            [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherInvalidData block:failureBlock];
             return;
         }
         
@@ -105,13 +99,99 @@
             successBlock(image);
         });
         
+        
+    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+        __strong __typeof__(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        
+        if (error){
+            if ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled) return;
+            
+            Kt_HanekeLog(@"Request %@ failed with error %@", strongSelf->_URL.absoluteString, error);
+            if (!failureBlock) return;
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                failureBlock(error);
+            });
+            return;
+        }
     }];
-    [_dataTask resume];
+    
+    self.kt_AFHTTPRequestOperation = afOperation;
+    [[NSOperationQueue mainQueue] addOperation:afOperation];
+    
+    
+    //    _cancelled = NO;
+    //    __weak __typeof__(self) weakSelf = self;
+    //    _dataTask = [self.URLSession dataTaskWithURL:_URL completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    //        __strong __typeof__(weakSelf) strongSelf = weakSelf;
+    //
+    //        if (!strongSelf) return;
+    //
+    //        if (strongSelf->_cancelled) return;
+    //
+    //        NSURL *URL = strongSelf->_URL;
+    //
+    //        if (error)
+    //        {
+    //            if ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled) return;
+    //
+    //            Kt_HanekeLog(@"Request %@ failed with error %@", URL.absoluteString, error);
+    //            if (!failureBlock) return;
+    //
+    //            dispatch_async(dispatch_get_main_queue(), ^{
+    //                failureBlock(error);
+    //            });
+    //            return;
+    //        }
+    //
+    //        if (![response isKindOfClass:NSHTTPURLResponse.class])
+    //        {
+    //            Kt_HanekeLog(@"Request %@ received unknown response %@", URL.absoluteString, response);
+    //            return;
+    //        }
+    //
+    //        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse*)response;
+    //        if (httpResponse.statusCode != 200)
+    //        {
+    //            NSString *errorDescription = [NSHTTPURLResponse localizedStringForStatusCode:httpResponse.statusCode];
+    //            [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherInvalidStatusCode block:failureBlock];
+    //            return;
+    //        }
+    //
+    //        const long long expectedContentLength = response.expectedContentLength;
+    //        if (expectedContentLength > -1)
+    //        {
+    //            const NSUInteger dataLength = data.length;
+    //            if (dataLength < expectedContentLength)
+    //            {
+    //                NSString *errorDescription = [NSString stringWithFormat:NSLocalizedString(@"Request %@ received %ld out of %ld bytes", @""), URL.absoluteString, (long)dataLength, (long)expectedContentLength];
+    //                [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherMissingData block:failureBlock];
+    //                return;
+    //            }
+    //        }
+    //
+    //        UIImage *image = [UIImage imageWithData:data];
+    //
+    //        if (!image)
+    //        {
+    //            NSString *errorDescription = [NSString stringWithFormat:NSLocalizedString(@"Failed to load image from data at URL %@", @""), URL];
+    //            [strongSelf failWithLocalizedDescription:errorDescription code:KTHNKErrorNetworkFetcherInvalidData block:failureBlock];
+    //            return;
+    //        }
+    //
+    //        dispatch_async(dispatch_get_main_queue(), ^{
+    //            successBlock(image);
+    //        });
+    //
+    //    }];
+    //    [_dataTask resume];
 }
 
 - (void)cancelFetch
 {
-    [_dataTask cancel];
+    //    [_dataTask cancel];
+    [self.kt_AFHTTPRequestOperation cancel];
     _cancelled = YES;
 }
 
@@ -124,11 +204,11 @@
 
 - (void)failWithLocalizedDescription:(NSString*)localizedDescription code:(NSInteger)code block:(void (^)(NSError *error))failureBlock;
 {
-    HanekeLog(@"%@", localizedDescription);
+    Kt_HanekeLog(@"%@", localizedDescription);
     if (!failureBlock) return;
-
+    
     NSDictionary *userInfo = @{ NSLocalizedDescriptionKey : localizedDescription , NSURLErrorKey : _URL};
-    NSError *error = [NSError errorWithDomain:HNKErrorDomain code:code userInfo:userInfo];
+    NSError *error = [NSError errorWithDomain:KTHNKErrorDomain code:code userInfo:userInfo];
     dispatch_async(dispatch_get_main_queue(), ^{
         failureBlock(error);
     });
@@ -136,7 +216,7 @@
 
 @end
 
-@implementation HNKNetworkFetcher(Subclassing)
+@implementation KTHNKNetworkFetcher(Subclassing)
 
 - (NSURLSession*)URLSession
 {
